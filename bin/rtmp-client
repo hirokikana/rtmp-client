@@ -1,0 +1,101 @@
+#!/usr/bin/env python3
+# -*- coding:utf-8 -*-
+
+import socket
+
+sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+sock.connect(('localhost', 1935))
+
+import time
+import random
+
+class C0S0:
+    _version = 3
+    def get_version(self):
+        return self._version
+
+    def get_message(self):
+        return self._version.to_bytes(1, 'little')
+
+class C1S1:
+    _timestamp = 0
+    _random = 0
+    _zero = 0
+    def __init__(self, timestamp):
+        self._timestamp = timestamp
+        self._random = random.getrandbits(1528 * 8)
+        self._zero = 0
+
+    def get_message(self):
+        return self._timestamp.to_bytes(4, 'big') + self._zero.to_bytes(4, 'little') + self._random.to_bytes(1528, 'little')
+
+    def get_time(self):
+        return self._timestamp
+
+
+class Rtmp:
+    def create_c0s0(self):
+        c0s0 = C0S0()
+        return c0s0
+    def create_c1s1(self):
+        c1s1 = C1S1(int(time.time()))
+        return c1s1
+        
+
+rtmp = Rtmp()
+
+# send c0c1
+c0 = rtmp.create_c0s0()
+c1 = rtmp.create_c1s1()
+sock.sendall(c0.get_message() + c1.get_message())
+
+# recv s0
+print('recv S0..')
+s0 = sock.recv(1)
+print('  version: %s' % s0.hex())
+
+# recv s1
+print('recv S1..')
+s1_time = sock.recv(4)
+print('  time: %s' % int(s1_time.hex(), 16))
+s1_zero = sock.recv(4)
+s1_random = sock.recv(1528)
+
+# recv s2
+print('recv S2..')
+s2_time = sock.recv(4)
+print('  time: %s' % int(s2_time.hex(), 16))
+s2_time2 = sock.recv(4)
+print('  time2: %s' % int(s2_time2.hex(), 16))
+s2_random = sock.recv(1528)
+
+# send c2
+sock.sendall(s2_time + s2_time + s2_random)
+
+# send connet
+
+# RTMP header 
+import struct
+number1_message = 0x0.to_bytes(1,'big') + struct.pack('>d', 1)
+connect_message = 0x02.to_bytes(1,'big') + len('connect').to_bytes(2,'big') + b'connect'
+hoge = 0x03.to_bytes(1,'big') + 0x03.to_bytes(2,'big') + b'app' + 0x02.to_bytes(1,'big') + 0x04.to_bytes(2,'big') + b'live' + 0x04.to_bytes(2,'big') + b'type' + 0x2.to_bytes(1, 'big') + 0xa.to_bytes(2,'big') + b'nonprivate' + 0x08.to_bytes(2,'big') + b'flashVer' + 0x02.to_bytes(1,'big') + 0x24.to_bytes(2,'big') + b'FMLE/3.0 (compatible; Lavf58.20.100)'
+hoge = 0x03.to_bytes(1,'big') + 0x03.to_bytes(2,'big') + b'app' + 0x02.to_bytes(1,'big') + 0x04.to_bytes(2,'big') + b'live'
+fuga = 0x05.to_bytes(2,'big') + b'tcUrl' + 0x02.to_bytes(1,'big') + 0x1a.to_bytes(2, 'big') + b'rtmp://localhost:1935/live'
+rtmp_body = connect_message + number1_message + hoge + fuga + 0x09.to_bytes(3, 'big')
+san = 0x3
+timestamp = 0
+body_length = len(rtmp_body)
+type_id = 0x14
+stream_id = 0
+basic_header = san.to_bytes(1, 'big')
+message_header = timestamp.to_bytes(3, 'big') + body_length.to_bytes(3, 'big') + type_id.to_bytes(1,'big') + stream_id.to_bytes(4, 'little')
+
+sock.sendall(basic_header + message_header + rtmp_body)
+#sock.sendall(hoge)
+#sock.sendall(fuga)
+#sock.sendall(0x09.to_bytes(3, 'big'))
+
+result = sock.recv(9999)
+import pdb;pdb.set_trace()
+
+sock.close()
