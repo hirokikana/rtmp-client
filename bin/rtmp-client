@@ -74,21 +74,53 @@ sock.sendall(s2_time + s2_time + s2_random)
 
 # send connet
 
-# RTMP header 
 import struct
-number1_message = 0x0.to_bytes(1,'big') + struct.pack('>d', 1)
-connect_message = 0x02.to_bytes(1,'big') + len('connect').to_bytes(2,'big') + b'connect'
-hoge = 0x03.to_bytes(1,'big') + 0x03.to_bytes(2,'big') + b'app' + 0x02.to_bytes(1,'big') + 0x04.to_bytes(2,'big') + b'live' + 0x04.to_bytes(2,'big') + b'type' + 0x2.to_bytes(1, 'big') + 0xa.to_bytes(2,'big') + b'nonprivate' + 0x08.to_bytes(2,'big') + b'flashVer' + 0x02.to_bytes(1,'big') + 0x24.to_bytes(2,'big') + b'FMLE/3.0 (compatible; Lavf58.20.100)'
-hoge = 0x03.to_bytes(1,'big') + 0x03.to_bytes(2,'big') + b'app' + 0x02.to_bytes(1,'big') + 0x04.to_bytes(2,'big') + b'live'
-fuga = 0x05.to_bytes(2,'big') + b'tcUrl' + 0x02.to_bytes(1,'big') + 0x1a.to_bytes(2, 'big') + b'rtmp://localhost:1935/live'
-rtmp_body = connect_message + number1_message + hoge + fuga + 0x09.to_bytes(3, 'big')
-san = 0x3
+
+class amf0():
+    def __init__(self, message_type, message):
+        self.type_mapping = {
+            'string' : 2,
+            'number' : 0,
+            'object' : 3
+        }
+        self.message_type = message_type
+        self.message = message
+        
+    def get_byte(self):
+        # type(1byte) + length(2byte) + value(length)
+        if (self.message_type == 'number'):
+            body = struct.pack('>d', self.message)
+            byte_message = (self.type_mapping[self.message_type]).to_bytes(1,'big') + body
+        elif(self.message_type == 'object'):
+            byte_message = (self.type_mapping[self.message_type]).to_bytes(1,'big')
+            for object_key in self.message:
+                byte_message += (len(object_key)).to_bytes(2,'big') + object_key
+                byte_message += (0x02).to_bytes(1,'big') + (len(self.message[object_key])).to_bytes(2,'big')  + self.message[object_key] # TODO string type
+        else:
+            body = self.message
+            byte_message = (self.type_mapping[self.message_type]).to_bytes(1,'big') + (len(body)).to_bytes(2,'big')  + body
+        return byte_message
+
+
+# RTMP header 
+connect_message = amf0('string', b'connect').get_byte()
+number1_message = amf0('number', 1).get_byte()
+object_message = amf0('object', {
+    b'app':b'live',
+    b'tcUrl': b'rtmp://localhost:1935/live',
+    b'flashVer': b'FMLE/3.0 (compatible; Lavf58.20.100)'
+}).get_byte()
+object_end = 0x09.to_bytes(3,'big')
+
+rtmp_body = connect_message + number1_message + object_message + object_end
+
 timestamp = 0
 body_length = len(rtmp_body)
 type_id = 0x14
 stream_id = 0
-basic_header = san.to_bytes(1, 'big')
+basic_header = (0x3).to_bytes(1, 'big')
 message_header = timestamp.to_bytes(3, 'big') + body_length.to_bytes(3, 'big') + type_id.to_bytes(1,'big') + stream_id.to_bytes(4, 'little')
+
 
 sock.sendall(basic_header + message_header + rtmp_body)
 #sock.sendall(hoge)
