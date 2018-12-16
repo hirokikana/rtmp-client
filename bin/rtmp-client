@@ -48,8 +48,10 @@ class amf0Parse():
                 body = byteio.read(8)
             result.append(body)
         self.parsed = result
-        print(self.parsed)
 
+    def get(self):
+        return self.parsed
+        
     def _object_parse(self, byteio):
         result = {}
         while(True):
@@ -136,23 +138,72 @@ class Rtmp:
         object_end = 0x09.to_bytes(3,'big')
         rtmp_body = connect_message + number1_message + object_message + object_end
 
-        # RTMP header
-        timestamp = 0
-        body_length = len(rtmp_body)
-        type_id = 0x14 # AMF0
-        stream_id = 0
-        basic_header = (0x3).to_bytes(1, 'big')
-        message_header = timestamp.to_bytes(3, 'big') + body_length.to_bytes(3, 'big') + type_id.to_bytes(1,'big') + stream_id.to_bytes(4, 'little')
+        # Chunk Header
+        ## Basic Header
+        chunk_stream_id = 0x03 # 0-2 id is reserved
+        basic_header = chunk_stream_id.to_bytes(1,'big') # fmt=0
+        ## Message Header
+        timestamp = (0).to_bytes(3, 'big')
+        message_length = len(rtmp_body).to_bytes(3, 'big')
+        message_type = (0x14).to_bytes(1,'big')
+        message_stream_id = (0).to_bytes(4, 'little')
+        ## Extend Timestamp / TODO
         
-        sock.sendall(basic_header + message_header + rtmp_body)
+        chunk_header = timestamp + message_length + message_type + message_stream_id
+
+        sock.sendall(basic_header + chunk_header + rtmp_body)
 
         # result
-        amf0Parse(self._recv(sock))
-        amf0Parse(self._recv(sock))
-        amf0Parse(self._recv(sock))
-        amf0Parse(self._recv(sock))
-        
+        self._recv(sock)
+        self._recv(sock)
+        self._recv(sock)
+        result = amf0Parse(self._recv(sock)).get()[3]
+        return result[b'code'] == b'NetConnection.Connect.Success'
 
+    def do_createstream(self, sock):
+        # body
+        createstream_message = amf0('string', b'createStream').get_byte()
+        transaction_id = amf0('number', 4).get_byte()
+        rtmp_body = createstream_message + transaction_id
+
+        # Chunk header
+        chunk_stream_id = (0x43).to_bytes(1,'big') # fmt=1
+        timestamp_delta = (0x0).to_bytes(3, 'big')
+        message_length = len(rtmp_body).to_bytes(3,'big')
+        message_type = (0x14).to_bytes(1,'big')
+        chunk_header = timestamp_delta + message_length + message_type
+        sock.sendall(chunk_stream_id + chunk_header + rtmp_body)
+        
+        self._recv(sock)
+
+    def do_publish(self, sock):
+        publish_message = amf0('string', b'publish').get_byte() + amf0('number', 5).get_byte() + (0x05).to_bytes(1,'big') +  amf0('string', b'test').get_byte() + amf0('string', b'live').get_byte()
+        rtmp_body = publish_message
+
+        chunk_stream_id = (0x8).to_bytes(1,'big')
+        timestamp = (0).to_bytes(3, 'big')
+        message_length = len(rtmp_body).to_bytes(3,'big')
+        message_type = (0x14).to_bytes(1, 'big')
+        message_stream_id = (1).to_bytes(4, 'little')
+        chunk_header = timestamp + message_length + message_type + message_stream_id
+        sock.sendall(chunk_stream_id + chunk_header + rtmp_body)
+        self._recv(sock)
+
+    def do_send_anydata(self, sock):
+        rtmp_body = amf0('string', b'aaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbccccccccccccc').get_byte()
+        #rtmp_body = (2).to_bytes(1, 'big') + b'aaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbccccccccccccc'
+        
+        chunk_stream_id = (0x06).to_bytes(1,'big')
+        timestamp = (0).to_bytes(3, 'big')
+        message_length = len(rtmp_body).to_bytes(3, 'big')
+        message_type = (8).to_bytes(1,'big')
+        message_stream_id = (1).to_bytes(4, 'little')
+
+        chunk_header = timestamp + message_length + message_type + message_stream_id
+
+        sock.sendall(chunk_stream_id + chunk_header + rtmp_body)
+        
+    
     def _recv(self,sock):
         chunk_stream_id = sock.recv(1) # TODO fmt!=0
         timestamp = sock.recv(3)
@@ -167,6 +218,15 @@ if __name__ == '__main__':
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.connect(('localhost', 1935))
     rtmp = Rtmp()
+
     rtmp.do_handshake(sock)
     rtmp.do_connect(sock)
+
+    rtmp.do_createstream(sock)
+    rtmp.do_publish(sock)
+    while(True):
+        rtmp.do_send_anydata(sock)
+        import time
+        time.sleep(1)
+    
     sock.close()
