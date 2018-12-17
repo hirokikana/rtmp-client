@@ -189,8 +189,8 @@ class Rtmp:
         sock.sendall(chunk_stream_id + chunk_header + rtmp_body)
         self._recv(sock)
 
-    def do_send_anydata(self, sock):
-        rtmp_body = b'a' * 32767
+    def do_send_anydata(self, sock, data):
+        rtmp_body = data
         
         chunk_stream_id = (0x06).to_bytes(1,'big')
         timestamp = (0).to_bytes(3, 'big')
@@ -214,6 +214,20 @@ class Rtmp:
         chunk_header = timestamp + message_length + message_type + message_stream_id
 
         sock.sendall(chunk_stream_id + chunk_header + rtmp_body)
+
+    def do_play(self, sock):
+        play_message = amf0('string', b'play').get_byte() + amf0('number', 5).get_byte() + (0x05).to_bytes(1,'big') + amf0('string', b'test').get_byte()
+        rtmp_body = play_message 
+        
+        chunk_stream_id = (0x8).to_bytes(1,'big')
+        timestamp = (0).to_bytes(3, 'big')
+        message_length = len(rtmp_body).to_bytes(3,'big')
+        message_type = (0x14).to_bytes(1, 'big')
+        message_stream_id = (1).to_bytes(4, 'little')
+        chunk_header = timestamp + message_length + message_type + message_stream_id
+        sock.sendall(chunk_stream_id + chunk_header + rtmp_body)
+        status = self._recv(sock)
+        sampleaccess = self._recv(sock)
     
     def _recv(self,sock):
         chunk_stream_id = sock.recv(1) # TODO fmt!=0
@@ -232,12 +246,18 @@ if __name__ == '__main__':
 
     rtmp.do_handshake(sock)
     rtmp.do_connect(sock)
-    rtmp.do_set_chunk_size(sock,32767)
-    rtmp.do_createstream(sock)
-    rtmp.do_publish(sock)
-    while(True):
-        rtmp.do_send_anydata(sock)
-        import time
-        time.sleep(1)
-    
+
+    import sys
+    if sys.argv[1] == 'play':
+        rtmp.do_play(sock)
+    elif sys.argv[1] == 'publish':
+        rtmp.do_set_chunk_size(sock,32767)
+        rtmp.do_createstream(sock)
+        rtmp.do_publish(sock)
+        fd = open('/Users/hiroki/Downloads/test.jpg', 'rb')
+        while(True):
+            data = fd.read(32767)
+            if len(data) == 0:
+                break
+            rtmp.do_send_anydata(sock, data)
     sock.close()
