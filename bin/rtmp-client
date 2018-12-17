@@ -190,19 +190,30 @@ class Rtmp:
         self._recv(sock)
 
     def do_send_anydata(self, sock):
-        rtmp_body = amf0('string', b'aaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbccccccccccccc').get_byte()
-        #rtmp_body = (2).to_bytes(1, 'big') + b'aaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbccccccccccccc'
+        rtmp_body = b'a' * 32767
         
         chunk_stream_id = (0x06).to_bytes(1,'big')
         timestamp = (0).to_bytes(3, 'big')
         message_length = len(rtmp_body).to_bytes(3, 'big')
-        message_type = (8).to_bytes(1,'big')
+        message_type = (9).to_bytes(1,'big') # audio data type
         message_stream_id = (1).to_bytes(4, 'little')
 
         chunk_header = timestamp + message_length + message_type + message_stream_id
 
         sock.sendall(chunk_stream_id + chunk_header + rtmp_body)
+
+    def do_set_chunk_size(self, sock, size):
+        rtmp_body = size.to_bytes(4,'big')
+
+        chunk_stream_id = (0x02).to_bytes(1,'big')
+        timestamp = (0).to_bytes(3,'big')
+        message_length = len(rtmp_body).to_bytes(3, 'big')
+        message_type = (1).to_bytes(1,'big')
+        message_stream_id = (0).to_bytes(4, 'little')
         
+        chunk_header = timestamp + message_length + message_type + message_stream_id
+
+        sock.sendall(chunk_stream_id + chunk_header + rtmp_body)
     
     def _recv(self,sock):
         chunk_stream_id = sock.recv(1) # TODO fmt!=0
@@ -221,7 +232,7 @@ if __name__ == '__main__':
 
     rtmp.do_handshake(sock)
     rtmp.do_connect(sock)
-
+    rtmp.do_set_chunk_size(sock,32767)
     rtmp.do_createstream(sock)
     rtmp.do_publish(sock)
     while(True):
