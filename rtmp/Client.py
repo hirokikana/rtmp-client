@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from rtmp import Message
 import time
+import io
 
 class Client:
     _sock = None
@@ -46,9 +47,7 @@ class Client:
         self._recv(sock)
         self._recv(sock)
         self._recv(sock)
-        #result = amf0Parse(self._recv(sock)).get()[3]
         self._recv(sock)
-        #return result[b'code'] == b'NetConnection.Connect.Success'
 
     def do_createstream(self):
         sock = self._sock
@@ -64,17 +63,21 @@ class Client:
 
     def do_send_anydata(self, data):
         sock = self._sock
-        rtmp_body = data
+        byteio = io.BytesIO(data)
 
         chunk_stream_id = (0x06).to_bytes(1,'big')
         timestamp = (0).to_bytes(3, 'big')
-        message_length = len(rtmp_body).to_bytes(3, 'big')
         message_type = (9).to_bytes(1,'big') # audio data type
         message_stream_id = (1).to_bytes(4, 'little')
 
-        chunk_header = timestamp + message_length + message_type + message_stream_id
-
-        sock.sendall(chunk_stream_id + chunk_header + rtmp_body)
+        while(True):
+            rtmp_body = 0x0.to_bytes(1, 'big')
+            rtmp_body += byteio.read(8191)
+            if (rtmp_body == 0x0.to_bytes(1, 'big')):
+                break
+            message_length = len(rtmp_body).to_bytes(3, 'big')
+            chunk_header = timestamp + message_length + message_type + message_stream_id
+            sock.sendall(chunk_stream_id + chunk_header + rtmp_body)
 
     def do_set_chunk_size(self, sock, size):
         rtmp_body = size.to_bytes(4,'big')
@@ -97,6 +100,13 @@ class Client:
         sock.sendall(play_message.get_message())
         status = self._recv(sock)
         sampleaccess = self._recv(sock)
+
+    def recv_event(self):
+        return self._recv(self._sock)
+
+    def recv_content(self):
+        hoge = self._recv(self._sock)
+        return hoge[1:]
     
     def _recv(self,sock):
         chunk_stream_id = sock.recv(1) # TODO fmt!=0

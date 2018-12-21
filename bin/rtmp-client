@@ -21,15 +21,18 @@ if __name__ == '__main__':
 
     if sys.argv[1] == 'play':
         rtmp.do_play()
-        # TODO recv loop
+        # stream begin(message type = 0x04) 00
+        rtmp.recv_event()
+        # stream content
+        while(True):
+            content = rtmp.recv_content()
+            sys.stdout.buffer.write(content)
+            sys.stdout.flush()
+        # stream EOF(message type = 0x04) 01
+        #rtmp.recv_event()
     elif sys.argv[1] == 'publish':
-        rtmp.do_set_chunk_size(sock,32767)
+        rtmp.do_set_chunk_size(sock,8192)
         rtmp.do_createstream()
         rtmp.do_publish()
-        fd = open('/Users/hiroki/Downloads/test.jpg', 'rb')
-        while(True):
-            data = fd.read(32767)
-            if len(data) == 0:
-                break
-            rtmp.do_send_anydata(data)
+        rtmp.do_send_anydata(input().encode())
     sock.close()
