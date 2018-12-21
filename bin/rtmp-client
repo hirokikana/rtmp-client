@@ -7,257 +7,29 @@ import time
 import random
 import struct
 import io
+import sys
 
-class C0S0:
-    _version = 3
-    def get_version(self):
-        return self._version
-
-    def get_message(self):
-        return self._version.to_bytes(1, 'little')
-
-class C1S1:
-    _timestamp = 0
-    _random = 0
-    _zero = 0
-    def __init__(self, timestamp):
-        self._timestamp = timestamp
-        self._random = random.getrandbits(1528 * 8)
-        self._zero = 0
-
-    def get_message(self):
-        return self._timestamp.to_bytes(4, 'big') + self._zero.to_bytes(4, 'little') + self._random.to_bytes(1528, 'little')
-
-    def get_time(self):
-        return self._timestamp
-
-class amf0Parse():
-    def __init__(self, binary):
-        result = []
-        byteio = io.BytesIO(binary)
-        while(True):
-            message_type = byteio.read(1)
-            if (message_type == b''):
-                break
-            if (int(message_type.hex(),16) == 2):
-                length = byteio.read(2)
-                body = byteio.read(int(length.hex(), 16))
-            elif (int(message_type.hex(),16) == 3):
-                body = self._object_parse(byteio)
-            else:
-                body = byteio.read(8)
-            result.append(body)
-        self.parsed = result
-
-    def get(self):
-        return self.parsed
-        
-    def _object_parse(self, byteio):
-        result = {}
-        while(True):
-            key_length = byteio.read(2)
-            if (int(key_length.hex(),16) == 0 and int(byteio.read(1).hex(),16) == 9):
-                break
-            key_body = byteio.read(int(key_length.hex(), 16))
-            value_amf0_type = byteio.read(1)
-            if (int(value_amf0_type.hex(), 16) == 2):
-                # string
-                value_length = byteio.read(2)
-                value_body = byteio.read(int(value_length.hex(), 16))
-            else:
-                value_body = byteio.read(8)
-
-            result[key_body] = value_body
-        return result
-
-    
-    
-class amf0():
-    def __init__(self, message_type, message):
-        self.type_mapping = {
-            'string' : 2,
-            'number' : 0,
-            'object' : 3
-        }
-        self.message_type = message_type
-        self.message = message
-        
-    def get_byte(self):
-        # type(1byte) + length(2byte) + value(length)
-        if (self.message_type == 'number'):
-            body = struct.pack('>d', self.message)
-            byte_message = (self.type_mapping[self.message_type]).to_bytes(1,'big') + body
-        elif(self.message_type == 'object'):
-            byte_message = (self.type_mapping[self.message_type]).to_bytes(1,'big')
-            for object_key in self.message:
-                byte_message += (len(object_key)).to_bytes(2,'big') + object_key
-                byte_message += (0x02).to_bytes(1,'big') + (len(self.message[object_key])).to_bytes(2,'big')  + self.message[object_key] # TODO string type
-        else:
-            body = self.message
-            byte_message = (self.type_mapping[self.message_type]).to_bytes(1,'big') + (len(body)).to_bytes(2,'big')  + body
-        return byte_message
-
-class Rtmp:
-    def do_handshake(self, sock):
-        # send c0c1
-        c0 = C0S0()
-        c1 = C1S1(int(time.time()))
-        sock.sendall(c0.get_message() + c1.get_message())
-
-        # recv s0
-        s0 = sock.recv(1)
-        #print('  version: %s' % s0.hex())
-
-        # recv s1
-        s1_time = sock.recv(4)
-        #print('  time: %s' % int(s1_time.hex(), 16))
-        s1_zero = sock.recv(4)
-        s1_random = sock.recv(1528)
-
-        # recv s2
-        s2_time = sock.recv(4)
-        #print('  time: %s' % int(s2_time.hex(), 16))
-        s2_time2 = sock.recv(4)
-        #print('  time2: %s' % int(s2_time2.hex(), 16))
-        s2_random = sock.recv(1528)
-        
-        # send c2
-        sock.sendall(s2_time + s2_time + s2_random)
-
-        return True
-        
-    def do_connect(self, sock):
-        # RTMP body
-        connect_message = amf0('string', b'connect').get_byte()
-        number1_message = amf0('number', 1).get_byte()
-        object_message = amf0('object', {
-            b'app':b'live',
-            b'tcUrl': b'rtmp://localhost:1935/live',
-            b'flashVer': b'FMLE/3.0 (compatible; Lavf58.20.100)'
-        }).get_byte()
-        object_end = 0x09.to_bytes(3,'big')
-        rtmp_body = connect_message + number1_message + object_message + object_end
-
-        # Chunk Header
-        ## Basic Header
-        chunk_stream_id = 0x03 # 0-2 id is reserved
-        basic_header = chunk_stream_id.to_bytes(1,'big') # fmt=0
-        ## Message Header
-        timestamp = (0).to_bytes(3, 'big')
-        message_length = len(rtmp_body).to_bytes(3, 'big')
-        message_type = (0x14).to_bytes(1,'big')
-        message_stream_id = (0).to_bytes(4, 'little')
-        ## Extend Timestamp / TODO
-        
-        chunk_header = timestamp + message_length + message_type + message_stream_id
-
-        sock.sendall(basic_header + chunk_header + rtmp_body)
-
-        # result
-        self._recv(sock)
-        self._recv(sock)
-        self._recv(sock)
-        result = amf0Parse(self._recv(sock)).get()[3]
-        return result[b'code'] == b'NetConnection.Connect.Success'
-
-    def do_createstream(self, sock):
-        # body
-        createstream_message = amf0('string', b'createStream').get_byte()
-        transaction_id = amf0('number', 4).get_byte()
-        rtmp_body = createstream_message + transaction_id
-
-        # Chunk header
-        chunk_stream_id = (0x43).to_bytes(1,'big') # fmt=1
-        timestamp_delta = (0x0).to_bytes(3, 'big')
-        message_length = len(rtmp_body).to_bytes(3,'big')
-        message_type = (0x14).to_bytes(1,'big')
-        chunk_header = timestamp_delta + message_length + message_type
-        sock.sendall(chunk_stream_id + chunk_header + rtmp_body)
-        
-        self._recv(sock)
-
-    def do_publish(self, sock):
-        publish_message = amf0('string', b'publish').get_byte() + amf0('number', 5).get_byte() + (0x05).to_bytes(1,'big') +  amf0('string', b'test').get_byte() + amf0('string', b'live').get_byte()
-        rtmp_body = publish_message
-
-        chunk_stream_id = (0x8).to_bytes(1,'big')
-        timestamp = (0).to_bytes(3, 'big')
-        message_length = len(rtmp_body).to_bytes(3,'big')
-        message_type = (0x14).to_bytes(1, 'big')
-        message_stream_id = (1).to_bytes(4, 'little')
-        chunk_header = timestamp + message_length + message_type + message_stream_id
-        sock.sendall(chunk_stream_id + chunk_header + rtmp_body)
-        self._recv(sock)
-
-    def do_send_anydata(self, sock, data):
-        rtmp_body = data
-        
-        chunk_stream_id = (0x06).to_bytes(1,'big')
-        timestamp = (0).to_bytes(3, 'big')
-        message_length = len(rtmp_body).to_bytes(3, 'big')
-        message_type = (9).to_bytes(1,'big') # audio data type
-        message_stream_id = (1).to_bytes(4, 'little')
-
-        chunk_header = timestamp + message_length + message_type + message_stream_id
-
-        sock.sendall(chunk_stream_id + chunk_header + rtmp_body)
-
-    def do_set_chunk_size(self, sock, size):
-        rtmp_body = size.to_bytes(4,'big')
-
-        chunk_stream_id = (0x02).to_bytes(1,'big')
-        timestamp = (0).to_bytes(3,'big')
-        message_length = len(rtmp_body).to_bytes(3, 'big')
-        message_type = (1).to_bytes(1,'big')
-        message_stream_id = (0).to_bytes(4, 'little')
-        
-        chunk_header = timestamp + message_length + message_type + message_stream_id
-
-        sock.sendall(chunk_stream_id + chunk_header + rtmp_body)
-
-    def do_play(self, sock):
-        play_message = amf0('string', b'play').get_byte() + amf0('number', 5).get_byte() + (0x05).to_bytes(1,'big') + amf0('string', b'test').get_byte()
-        rtmp_body = play_message 
-        
-        chunk_stream_id = (0x8).to_bytes(1,'big')
-        timestamp = (0).to_bytes(3, 'big')
-        message_length = len(rtmp_body).to_bytes(3,'big')
-        message_type = (0x14).to_bytes(1, 'big')
-        message_stream_id = (1).to_bytes(4, 'little')
-        chunk_header = timestamp + message_length + message_type + message_stream_id
-        sock.sendall(chunk_stream_id + chunk_header + rtmp_body)
-        status = self._recv(sock)
-        sampleaccess = self._recv(sock)
-    
-    def _recv(self,sock):
-        chunk_stream_id = sock.recv(1) # TODO fmt!=0
-        timestamp = sock.recv(3)
-        message_length = sock.recv(3)
-        message_type_id = sock.recv(1)
-        message_stream_id = sock.recv(4)
-        body = sock.recv(int(message_length.hex(), 16))
-        return body
-
+sys.path.append('./')
+from rtmp.Client import Client
 
 if __name__ == '__main__':
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.connect(('localhost', 1935))
-    rtmp = Rtmp()
+    rtmp = Client(sock)
+    rtmp.do_handshake()
+    rtmp.do_connect()
 
-    rtmp.do_handshake(sock)
-    rtmp.do_connect(sock)
-
-    import sys
     if sys.argv[1] == 'play':
-        rtmp.do_play(sock)
+        rtmp.do_play()
+        # TODO recv loop
     elif sys.argv[1] == 'publish':
         rtmp.do_set_chunk_size(sock,32767)
-        rtmp.do_createstream(sock)
-        rtmp.do_publish(sock)
+        rtmp.do_createstream()
+        rtmp.do_publish()
         fd = open('/Users/hiroki/Downloads/test.jpg', 'rb')
         while(True):
             data = fd.read(32767)
             if len(data) == 0:
                 break
-            rtmp.do_send_anydata(sock, data)
+            rtmp.do_send_anydata(data)
     sock.close()
